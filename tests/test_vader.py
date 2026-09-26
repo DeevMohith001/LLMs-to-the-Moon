@@ -2,7 +2,7 @@
 Unit tests for VADER baseline and financial lexicon mappings.
 """
 
-from src.models.vader_model import VADERBaseline
+from src.baselines.vader import VADERBaseline
 
 
 def test_vader_bullish_prediction():

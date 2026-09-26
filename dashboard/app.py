@@ -287,7 +287,6 @@ elif page == "Page 2: Sentiment Analysis (Live)":
                 rationale = f"VADER Compound polarity score: {score:+.4f}"
             elif "Logistic Regression" in selected_model:
                 from src.baselines.tfidf_lr import TFIDFLogisticRegressionBaseline
-                from src.data.preprocessing import load_splits_or_create
                 train_p = DATA_PROC / "train.parquet"
                 if train_p.exists():
                     tr = pd.read_parquet(train_p)

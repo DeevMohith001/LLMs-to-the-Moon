@@ -150,12 +150,13 @@ To run multi-path labeling with the teacher LLM:
 
 ```bash
 python -c "
-from src.data.preprocessing import load_splits_or_create
+import pandas as pd
+from src.utils.common import DATA_PROC
 from src.llm.client import get_llm_provider
 from src.llm.labeling import generate_teacher_weak_labels_dataset
 from src.llm.aggregation import aggregate_paths_dataframe, save_weak_labels
 
-train_df, _, _ = load_splits_or_create()
+train_df = pd.read_parquet(DATA_PROC / 'train.parquet')
 provider = get_llm_provider()
 paths = generate_teacher_weak_labels_dataset(train_df, provider=provider, num_paths=8, max_samples=100)
 weak = aggregate_paths_dataframe(paths, original_df=train_df)
