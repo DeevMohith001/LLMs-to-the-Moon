@@ -232,13 +232,19 @@ def create_splits(
     return train_df, val_df, test_df
 
 
-def run_preprocessing_pipeline() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def run_preprocessing_pipeline(
+    allow_synthetic: bool = True,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     End-to-end execution of data loading, preprocessing, and saving to disk.
+
+    Args:
+        allow_synthetic: If True, fall back to synthetic data when real data
+            is unavailable. Set to False for research pipelines.
     """
     from src.data.ingestion import load_raw_data
 
-    raw_df = load_raw_data()
+    raw_df = load_raw_data(allow_synthetic=allow_synthetic)
     processed_df = preprocess_dataframe(raw_df)
 
     # Save full processed dataset

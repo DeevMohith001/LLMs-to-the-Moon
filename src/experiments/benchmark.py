@@ -20,6 +20,7 @@ from src.baselines.tfidf_lr import TFIDFLogisticRegressionBaseline
 from src.baselines.tfidf_svm import TFIDFLinearSVMBaseline
 from src.baselines.tfidf_nb import TFIDFNaiveBayesBaseline
 from src.evaluation.metrics import compute_sentiment_metrics, plot_confusion_matrix, save_metrics
+from src.data.ingestion import assert_real_data, DataUnavailableError
 from src.utils.common import DATA_PROC, OUTPUTS_DIR, RESULTS_DIR
 from src.utils.logging import get_logger
 
@@ -35,7 +36,18 @@ def run_comprehensive_benchmark(
 ) -> pd.DataFrame:
     """
     Run evaluation across all models on test_df and compile master metrics table.
+
+    Validates that test data is real (not synthetic) before running benchmarks.
     """
+    # Verify data provenance — research results must use real data
+    try:
+        assert_real_data(test_df)
+    except DataUnavailableError as e:
+        logger.warning(
+            f"⚠️  SYNTHETIC DATA DETECTED: {e}\n"
+            "Benchmark results from synthetic data should NOT be reported as research results."
+        )
+
     eval_test = test_df.iloc[:max_test_samples].copy() if max_test_samples else test_df.copy()
     text_col = "clean_text" if "clean_text" in eval_test.columns else "text"
     train_text_col = "clean_text" if "clean_text" in train_df.columns else "text"

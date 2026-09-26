@@ -5,6 +5,10 @@ Implements:
 - Experiment R1: Classification Baseline (Cross-Entropy Loss on majority teacher labels)
 - Experiment R2: Regression Distillation (MSE Loss on continuous teacher soft scores)
 - Validation tracking, early stopping, and checkpoint persistence to outputs/models/
+
+CRITICAL: teacher_soft_score must ALWAYS come from LLM multi-path predictions,
+NEVER from ground-truth sentiment_label. The entire purpose of distillation
+is to transfer knowledge from the teacher LLM to the student model.
 """
 
 from pathlib import Path
@@ -43,17 +47,34 @@ def train_regression_student(
     """
     Train student model using Regression Distillation (Experiment R2).
     Loss: MSELoss between predicted scalar and teacher_soft_score in [-1.0, 1.0].
+
+    CRITICAL: teacher_soft_score must be derived from LLM multi-path predictions,
+    NOT from ground-truth sentiment_label.
     """
     device = device or torch.device("cpu")
+
+    # Validate that teacher_soft_score exists
+    if "teacher_soft_score" not in train_df.columns:
+        raise ValueError(
+            "train_df must contain 'teacher_soft_score' column. "
+            "This column must be computed from LLM multi-path predictions "
+            "using generate_teacher_weak_labels(), NOT derived from sentiment_label. "
+            "See docs/PAPER_METHODOLOGY.md for the correct distillation pipeline."
+        )
+
     logger.info(
         f"Starting Student Regression Distillation on {len(train_df)} samples ({epochs} epochs, lr={lr})..."
+    )
+    logger.info(
+        f"teacher_soft_score stats — mean: {train_df['teacher_soft_score'].mean():.4f}, "
+        f"std: {train_df['teacher_soft_score'].std():.4f}"
     )
 
     model, tokenizer = build_student_model(
         backbone_name=backbone_name, objective="regression", device=device
     )
 
-    # Prepare datasets
+    # Prepare datasets — targets from LLM-derived soft scores
     train_targets = train_df["teacher_soft_score"].tolist()
     val_targets = (
         val_df["teacher_soft_score"].tolist()
@@ -147,8 +168,21 @@ def train_classification_student(
 ) -> Tuple[nn.Module, Any, Dict[str, Any]]:
     """
     Train student model using Categorical Cross-Entropy (Baseline Experiment R1).
+
+    CRITICAL: Training labels must come from teacher LLM majority vote
+    (teacher_majority_label), NOT from ground-truth sentiment_label.
     """
     device = device or torch.device("cpu")
+
+    # Validate that teacher labels exist
+    if "teacher_majority_label" not in train_df.columns:
+        raise ValueError(
+            "train_df must contain 'teacher_majority_label' column. "
+            "This column must be computed from LLM multi-path majority voting "
+            "using generate_teacher_weak_labels(), NOT from ground-truth labels. "
+            "Using ground-truth sentiment_label would defeat the purpose of distillation."
+        )
+
     logger.info(
         f"Starting Student Classification Baseline on {len(train_df)} samples ({epochs} epochs, lr={lr})..."
     )
@@ -157,13 +191,12 @@ def train_classification_student(
         backbone_name=backbone_name, objective="classification", device=device
     )
 
-    train_labels = (
-        train_df["teacher_majority_label"].tolist()
-        if "teacher_majority_label" in train_df.columns
-        else train_df["sentiment_label"].tolist()
-    )
+    # Use teacher majority labels from LLM predictions (NOT ground truth)
+    train_labels = train_df["teacher_majority_label"].tolist()
     val_labels = (
-        val_df["sentiment_label"].tolist()
+        val_df["teacher_majority_label"].tolist()
+        if "teacher_majority_label" in val_df.columns
+        else val_df["sentiment_label"].tolist()
         if "sentiment_label" in val_df.columns
         else ["neutral"] * len(val_df)
     )

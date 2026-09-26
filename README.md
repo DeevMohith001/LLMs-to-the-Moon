@@ -167,26 +167,57 @@ Produces `data/processed/weak_labels.csv` with `teacher_soft_score` in $[-1.0, 1
 ---
 
 ## 11. Distillation & Student Training
-Train the student model using regression loss (MSE) on continuous soft scores:
+Train the student model using the full paper pipeline:
+1. Teacher LLM generates K=8 reasoning paths per post
+2. Paths are aggregated via majority vote + continuous soft scores
+3. Consistency filtering retains posts with ≥ 5/8 agreement
+4. Student model trains with MSE regression loss on the **LLM-derived** soft scores
 
 ```bash
+# Full end-to-end distillation pipeline (recommended):
 python -c "
-import pandas as pd
-from src.utils.common import DATA_PROC
+from src.models.distillation import run_distillation_experiments
+metrics = run_distillation_experiments(max_train_samples=100, max_val_samples=30, epochs=3)
+print(metrics)
+"
+
+# Or step-by-step for inspection:
+python -c "
+from src.llm.client import get_llm_provider
+from src.llm.labeling import generate_teacher_weak_labels_dataset
+from src.llm.aggregation import aggregate_paths_dataframe, save_weak_labels
 from src.distillation.dataset import filter_by_consistency
 from src.distillation.train import train_regression_student
+import pandas as pd
+from src.utils.common import DATA_PROC
 
+# Load data
 train_df = pd.read_parquet(DATA_PROC / 'train.parquet')
 val_df = pd.read_parquet(DATA_PROC / 'val.parquet')
-score_map = {'BULLISH': 1.0, 'BEARISH': -1.0, 'NEUTRAL': 0.0}
-train_df['teacher_soft_score'] = train_df['sentiment_label'].map(score_map).fillna(0.0)
-val_df['teacher_soft_score'] = val_df['sentiment_label'].map(score_map).fillna(0.0)
 
-model, tok, hist = train_regression_student(train_df, val_df, epochs=3, batch_size=16)
+# Step 1: Teacher LLM generates 8 reasoning paths per post
+provider = get_llm_provider()
+train_paths = generate_teacher_weak_labels_dataset(train_df, provider=provider, num_paths=8, max_samples=100)
+val_paths = generate_teacher_weak_labels_dataset(val_df, provider=provider, num_paths=8, max_samples=30)
+
+# Step 2: Aggregate paths → majority vote + soft scores
+train_agg = aggregate_paths_dataframe(train_paths, original_df=train_df)
+val_agg = aggregate_paths_dataframe(val_paths, original_df=val_df)
+
+# Step 3: Consistency filter (≥ 5/8 agreement)
+train_filtered, _ = filter_by_consistency(train_agg, threshold=5)
+val_filtered, _ = filter_by_consistency(val_agg, threshold=5)
+
+# CRITICAL: teacher_soft_score is derived from LLM predictions, NOT from sentiment_label
+# It was computed by the aggregation module as: (pos_count - neg_count) / num_paths
+print(f'Training soft score stats: mean={train_filtered[\"teacher_soft_score\"].mean():.4f}')
+
+# Step 4: Train student with regression loss on LLM-derived soft scores
+model, tok, hist = train_regression_student(train_filtered, val_filtered, epochs=3, batch_size=16)
 "
 ```
 
----
+> **⚠️ IMPORTANT:** The `teacher_soft_score` column is computed from the LLM's multi-path predictions (positive_count − negative_count) / K, NOT from the ground-truth `sentiment_label`. Deriving it from ground truth would defeat the purpose of knowledge distillation.
 
 ## 12. Benchmark Evaluation
 Run the comprehensive benchmark across all models:

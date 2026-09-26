@@ -5,6 +5,10 @@ Dataset strategy:
   1. Try loading from local data/raw/ if already downloaded.
   2. Download from HuggingFace (public Reddit WSB/financial datasets).
   3. Standardise into a common schema.
+
+IMPORTANT: Synthetic data is NEVER used for research results.
+If real data is unavailable, this module raises DataUnavailableError
+instead of silently generating synthetic data.
 """
 
 import os
@@ -23,6 +27,13 @@ from src.utils.common import (
 logger = get_logger(__name__)
 
 
+# ── Exceptions ────────────────────────────────────────────────
+class DataUnavailableError(RuntimeError):
+    """Raised when no real dataset can be loaded or downloaded.
+    Prevents silent fallback to synthetic data in research pipelines."""
+    pass
+
+
 # ── Standard Schema ───────────────────────────────────────────
 RAW_SCHEMA_COLS = [
     "post_id", "timestamp", "subreddit", "title", "body",
@@ -39,11 +50,14 @@ PROCESSED_SCHEMA_COLS = [
 # ── Download helpers ──────────────────────────────────────────
 def download_reddit_dataset() -> pd.DataFrame:
     """
-    Download a public Reddit financial dataset.
-    Uses the 'SocialGrep/reddit-wallstreetbets-aug-2021' and similar
-    HuggingFace datasets, falling back to a synthetic sample if unavailable.
+    Download a public Reddit financial dataset from HuggingFace.
+
+    IMPORTANT: This function does NOT fall back to synthetic data.
+    If no real dataset can be downloaded, it raises DataUnavailableError.
     """
     logger.info("Attempting to download Reddit financial dataset...")
+
+    errors = []
 
     # Try HuggingFace datasets
     try:
@@ -65,14 +79,24 @@ def download_reddit_dataset() -> pd.DataFrame:
                 return _standardize_hf_reddit(df, ds_name)
             except Exception as e:
                 logger.warning(f"Could not load {ds_name}: {e}")
+                errors.append(f"{ds_name}: {e}")
                 continue
 
     except ImportError:
+        errors.append("'datasets' library not installed (pip install datasets)")
         logger.warning("datasets library not installed")
 
-    # Fallback: generate a representative sample for development
-    logger.warning("No HuggingFace dataset available. Generating synthetic sample for development.")
-    return _generate_development_dataset()
+    # NO SYNTHETIC FALLBACK — raise error with actionable guidance
+    raise DataUnavailableError(
+        "No real Reddit dataset could be loaded.\n"
+        "Attempted sources and errors:\n"
+        + "\n".join(f"  - {e}" for e in errors) + "\n\n"
+        "To proceed, you must do ONE of the following:\n"
+        "  1. Install the 'datasets' library: pip install datasets\n"
+        "  2. Place a real Reddit dataset at: data/raw/reddit_posts.parquet\n"
+        "  3. For development/testing ONLY, use generate_development_dataset() explicitly\n"
+        "     (results from synthetic data must NEVER be reported as research results)"
+    )
 
 
 def _standardize_hf_reddit(df: pd.DataFrame, source: str) -> pd.DataFrame:
@@ -128,14 +152,27 @@ def _standardize_hf_reddit(df: pd.DataFrame, source: str) -> pd.DataFrame:
     return result
 
 
-def _generate_development_dataset() -> pd.DataFrame:
+def generate_development_dataset() -> pd.DataFrame:
     """
     Generate a small realistic development dataset for testing the pipeline.
-    These are illustrative Reddit-style posts — NOT real data and NOT used for
-    reporting any experimental result.
+
+    ⚠️  IMPORTANT: These are illustrative Reddit-style posts — NOT real data.
+    This function is ONLY for:
+      - Unit tests
+      - Smoke tests
+      - Development pipeline testing
+    Results from this data must NEVER be reported as research results.
+
+    The returned DataFrame includes a 'data_source' column set to 'SYNTHETIC'
+    so downstream code can verify data provenance.
     """
     set_seed(42)
     rng = np.random.default_rng(42)
+
+    logger.warning(
+        "⚠️  GENERATING SYNTHETIC DEVELOPMENT DATASET. "
+        "This data must NOT be used for research results."
+    )
 
     # Realistic examples spanning sentiment types
     examples = [
@@ -277,21 +314,37 @@ def _generate_development_dataset() -> pd.DataFrame:
                         "body": body,
                         "score": int(rng.integers(5, 8500)),
                         "num_comments": int(rng.integers(1, 650)),
-                        "source": "synthetic_reddit_v1",
+                        "source": "SYNTHETIC_DEV_v1",
+                        "data_source": "SYNTHETIC",
                         "_ticker": ticker,
                         "_sentiment": sentiment_label,
                     })
 
     df = pd.DataFrame(all_posts)
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-    logger.info(f"Generated {len(df)} diverse development posts")
+    logger.info(f"Generated {len(df)} diverse SYNTHETIC development posts")
     return df
 
 
 # ── Main ingestion logic ──────────────────────────────────────
-def load_raw_data(force_download: bool = False) -> pd.DataFrame:
+def load_raw_data(
+    force_download: bool = False,
+    allow_synthetic: bool = False,
+) -> pd.DataFrame:
     """
     Load raw Reddit data. Uses cached version if available.
+
+    Args:
+        force_download: If True, re-download even if cached file exists.
+        allow_synthetic: If True, fall back to synthetic data when real data
+            is unavailable. This should ONLY be used for development and testing,
+            NEVER for research results.
+
+    Returns:
+        DataFrame with raw Reddit posts.
+
+    Raises:
+        DataUnavailableError: If no real data can be loaded and allow_synthetic=False.
     """
     raw_file = DATA_RAW / "reddit_posts.parquet"
 
@@ -299,16 +352,55 @@ def load_raw_data(force_download: bool = False) -> pd.DataFrame:
         logger.info(f"Loading cached raw data from {raw_file}")
         df = pd.read_parquet(raw_file)
         logger.info(f"Loaded {len(df)} posts from cache")
+        # Tag data source if not already tagged
+        if "data_source" not in df.columns:
+            source_val = df.get("source", pd.Series(["unknown"])).iloc[0]
+            if "synthetic" in str(source_val).lower():
+                df["data_source"] = "SYNTHETIC"
+            else:
+                df["data_source"] = "REAL"
         return df
 
-    # Download fresh data
-    df = download_reddit_dataset()
+    # Try downloading real data
+    try:
+        df = download_reddit_dataset()
+        df["data_source"] = "REAL"
+    except DataUnavailableError:
+        if allow_synthetic:
+            logger.warning(
+                "⚠️  Real data unavailable. Using SYNTHETIC development dataset. "
+                "Results from this data must NOT be reported as research results."
+            )
+            df = generate_development_dataset()
+        else:
+            raise
 
     # Save raw
     df.to_parquet(raw_file, index=False)
     logger.info(f"Saved {len(df)} posts to {raw_file}")
 
     return df
+
+
+def assert_real_data(df: pd.DataFrame) -> None:
+    """
+    Guard function: raises DataUnavailableError if DataFrame contains
+    synthetic data. Use this at the start of any research pipeline.
+    """
+    if "data_source" in df.columns:
+        if (df["data_source"] == "SYNTHETIC").any():
+            raise DataUnavailableError(
+                "This DataFrame contains SYNTHETIC data. "
+                "Research results cannot be generated from synthetic data. "
+                "Please provide a real Reddit dataset."
+            )
+    if "source" in df.columns:
+        sources = df["source"].unique()
+        if any("synthetic" in str(s).lower() for s in sources):
+            raise DataUnavailableError(
+                f"This DataFrame was generated from synthetic source(s): {sources}. "
+                "Research results cannot be generated from synthetic data."
+            )
 
 
 def load_fiqa_dataset() -> dict:
@@ -330,6 +422,7 @@ def load_fiqa_dataset() -> dict:
                 df["sentiment_label"] = df["score"].apply(
                     lambda x: "BULLISH" if x > 0 else ("BEARISH" if x < 0 else "NEUTRAL")
                 )
+            df["data_source"] = "REAL"
             splits[split_name] = df
             logger.info(f"FiQA {split_name}: {len(df)} samples")
         return splits
@@ -340,9 +433,11 @@ def load_fiqa_dataset() -> dict:
 
 if __name__ == "__main__":
     set_seed(42)
-    df = load_raw_data(force_download=True)
+    # For development, allow synthetic fallback
+    df = load_raw_data(force_download=True, allow_synthetic=True)
     print(f"\nDataset shape: {df.shape}")
     print(f"Columns: {list(df.columns)}")
+    print(f"Data source: {df['data_source'].unique()}")
     print(f"\nSample:\n{df.head()}")
     if "timestamp" in df.columns:
         print(f"\nDate range: {df['timestamp'].min()} -> {df['timestamp'].max()}")
