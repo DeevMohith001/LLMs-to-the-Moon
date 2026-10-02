@@ -11,7 +11,7 @@ Statistical and Econometric Analysis of Financial Sentiment:
 
 import sys
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt

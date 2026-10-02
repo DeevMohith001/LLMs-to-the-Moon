@@ -122,7 +122,10 @@ def preprocess_dataframe(df: pd.DataFrame, min_text_len: int = 15) -> pd.DataFra
     logger.info(f"Starting preprocessing on {len(df)} raw records...")
     processed = df.copy()
 
-    # Combine title and body
+    # Explicitly ensure data_source is preserved
+    if "data_source" not in processed.columns:
+        source_val = str(processed.get("source", pd.Series(["unknown"])).iloc[0] if len(processed) > 0 else "")
+        processed["data_source"] = "SYNTHETIC" if "synthetic" in source_val.lower() else "REAL"
     processed["text"] = [
         combine_title_and_body(t, b)
         for t, b in zip(processed.get("title", [""] * len(processed)),

@@ -71,14 +71,29 @@ def run_full_financial_pipeline():
 
     logger.info(f"Loaded processed Reddit data: {len(reddit_df)} posts (verified REAL)")
 
-    # Determine unique tickers
-    tickers = [t for t in reddit_df["ticker"].dropna().unique() if len(t) <= 5]
-    logger.info(f"Target tickers for financial analysis ({len(tickers)}): {tickers}")
+    # Focus on top liquid tickers with high post counts to avoid thousands of slow HTTP calls
+    target_candidates = ["AAPL", "TSLA", "MSFT", "NVDA", "GME", "GOOGL", "SPY", "AMZN", "META", "AMD"]
+    tickers = [t for t in target_candidates if t in reddit_df["ticker"].values]
+    if not tickers:
+        tickers = reddit_df["ticker"].value_counts().head(10).index.tolist()
 
-    # Determine date range
+    reddit_df = reddit_df[reddit_df["ticker"].isin(tickers)].copy()
+    logger.info(f"Target tickers for financial analysis ({len(tickers)}): {tickers} ({len(reddit_df)} posts)")
+
+    # Score posts if sentiment_score is missing
+    if "sentiment_score" not in reddit_df.columns or reddit_df["sentiment_score"].isna().all():
+        logger.info("Scoring real Reddit posts using VADER baseline in single pass...")
+        from src.baselines.vader import VADERBaseline
+        vader = VADERBaseline()
+        texts_trunc = [str(t)[:1000] for t in reddit_df["text"]]
+        labels, scores = vader.predict(texts_trunc)
+        reddit_df["sentiment_label"] = labels
+        reddit_df["sentiment_score"] = scores
+
+    # Determine date range (bounded to active market years)
     ts = pd.to_datetime(reddit_df["timestamp"], utc=True)
-    start_date = (ts.min() - pd.Timedelta(days=5)).strftime("%Y-%m-%d")
-    end_date = (ts.max() + pd.Timedelta(days=15)).strftime("%Y-%m-%d")
+    start_date = max(pd.to_datetime("2020-01-01", utc=True), ts.min() - pd.Timedelta(days=5)).strftime("%Y-%m-%d")
+    end_date = min(pd.to_datetime("2025-07-20", utc=True), ts.max() + pd.Timedelta(days=15)).strftime("%Y-%m-%d")
 
     # 2. Fetch prices and compute forward returns
     prices_raw = fetch_historical_prices(tickers, start_date=start_date, end_date=end_date)

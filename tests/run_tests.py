@@ -44,7 +44,20 @@ from tests.test_smoke_pipeline import (
     test_end_to_end_smoke_pipeline,
 )
 
+from tests.test_data_integrity import (
+    test_assert_real_data_rejects_synthetic,
+    test_assert_real_data_accepts_real,
+    test_create_splits_zero_leakage_and_mutually_exclusive,
+    test_fiqa_loader_protocol_and_subtasks,
+    test_standardize_hf_reddit_schema,
+)
+
 test_funcs = [
+    test_assert_real_data_rejects_synthetic,
+    test_assert_real_data_accepts_real,
+    test_create_splits_zero_leakage_and_mutually_exclusive,
+    test_fiqa_loader_protocol_and_subtasks,
+    test_standardize_hf_reddit_schema,
     test_clean_text_html_and_urls,
     test_clean_text_emoji_preservation,
     test_extract_cashtags,

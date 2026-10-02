@@ -252,3 +252,105 @@ def run_comprehensive_benchmark(
 
     logger.info("\n=== MASTER BENCHMARK LEADERBOARD ===\n" + lb_df.to_string())
     return lb_df
+
+
+def run_fiqa_benchmark(
+    subtasks: Optional[List[str]] = None,
+    include_finbert: bool = True,
+    include_vader: bool = True,
+) -> pd.DataFrame:
+    """
+    Run evaluation on the real FiQA benchmark (FiQA-News and FiQA-Post)
+    reproducing the cross-dataset evaluation in Deng et al. 2023 (Table 2).
+
+    Uses real data from pauri32/fiqa-2018 with exact paper protocol:
+    - Filters out score == 0 (ambiguous)
+    - Filters out multi-stock texts
+    - Binary classification: BULLISH (score > 0) vs BEARISH (score < 0)
+    """
+    from src.data.ingestion import load_fiqa_dataset
+
+    if subtasks is None:
+        subtasks = ["news", "post"]
+
+    results = []
+
+    for subtask in subtasks:
+        splits = load_fiqa_dataset(subtask=subtask)
+        if not splits or "test" not in splits:
+            logger.warning(f"Could not load FiQA {subtask} splits.")
+            continue
+
+        test_df = splits["test"]
+        y_true = test_df["sentiment_label"].tolist()
+        texts = test_df["text"].tolist()
+        dataset_name = f"FiQA-{subtask.capitalize()}"
+
+        # VADER baseline
+        if include_vader:
+            vader = VADERBaseline()
+            t0 = time.time()
+            v_preds = [vader.predict_label(t) for t in texts]
+            # Map neutral to majority class or binary
+            v_bin = ["BULLISH" if p == "BULLISH" else "BEARISH" for p in v_preds]
+            m_vader = compute_sentiment_metrics(y_true, v_bin)
+            results.append({
+                "Dataset": dataset_name,
+                "Model": "VADER (Lexicon)",
+                "Category": "[PROJECT EXTENSION]",
+                "Accuracy": m_vader["accuracy"],
+                "Macro F1": m_vader["macro_f1"],
+                "Precision": m_vader["precision"],
+                "Recall": m_vader["recall"],
+                "Samples": len(test_df),
+            })
+
+        # FinBERT models
+        if include_finbert:
+            from src.baselines.finbert import FinBERTBaseline
+
+            for model_name, display_name in [
+                ("ProsusAI/finbert", "FinBERT (ProsusAI)"),
+                ("yiyanghkust/finbert-tone", "FinBERT (HKUST)"),
+            ]:
+                try:
+                    logger.info(f"Evaluating {display_name} on {dataset_name}...")
+                    fb = FinBERTBaseline(model_name)
+                    preds, confs, probs = fb.predict_batch(texts)
+
+                    # Binary forced choice per paper protocol
+                    bull_idx = [k for k, v in fb.id_to_class.items() if v == "BULLISH"][0]
+                    bear_idx = [k for k, v in fb.id_to_class.items() if v == "BEARISH"][0]
+                    bin_preds = [
+                        "BULLISH" if p[bull_idx] >= p[bear_idx] else "BEARISH"
+                        for p in probs
+                    ]
+
+                    m = compute_sentiment_metrics(y_true, bin_preds)
+                    results.append({
+                        "Dataset": dataset_name,
+                        "Model": display_name,
+                        "Category": "[PAPER REPRODUCTION]",
+                        "Accuracy": m["accuracy"],
+                        "Macro F1": m["macro_f1"],
+                        "Precision": m["precision"],
+                        "Recall": m["recall"],
+                        "Samples": len(test_df),
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to evaluate {display_name} on {dataset_name}: {e}")
+
+    fiqa_df = pd.DataFrame(results)
+    if not fiqa_df.empty:
+        for target_dir in [OUTPUTS_DIR / "metrics", RESULTS_DIR]:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            fiqa_df.to_csv(target_dir / "fiqa_benchmark.csv", index=False)
+        logger.info("\n=== FIQA BENCHMARK RESULTS ===\n" + fiqa_df.to_string())
+
+    return fiqa_df
+
+
+if __name__ == "__main__":
+    print("Running FiQA benchmark...")
+    fiqa_res = run_fiqa_benchmark()
+    print(fiqa_res)

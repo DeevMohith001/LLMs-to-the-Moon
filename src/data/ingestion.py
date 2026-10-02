@@ -15,6 +15,7 @@ import os
 import json
 from pathlib import Path
 from datetime import datetime
+from typing import Optional, List, Dict, Any, Tuple
 
 import pandas as pd
 import numpy as np
@@ -65,13 +66,18 @@ def download_reddit_dataset() -> pd.DataFrame:
 
         # Try multiple dataset sources in order of preference
         hf_datasets = [
+            ("emilpartow/reddit_finance_posts_apple-tesla-microsoft", None),
             ("SocialGrep/reddit-r-wallstreetbets-posts-daily", None),
         ]
 
         for ds_name, ds_config in hf_datasets:
             try:
                 logger.info(f"Trying HuggingFace dataset: {ds_name}")
-                ds = load_dataset(ds_name, ds_config, trust_remote_code=True)
+                kwargs = {}
+                if ds_config:
+                    ds = load_dataset(ds_name, ds_config, **kwargs)
+                else:
+                    ds = load_dataset(ds_name, **kwargs)
                 # Get the first available split
                 split_name = list(ds.keys())[0]
                 df = ds[split_name].to_pandas()
@@ -146,7 +152,8 @@ def _standardize_hf_reddit(df: pd.DataFrame, source: str) -> pd.DataFrame:
         result["num_comments"] = 0
 
     result["source"] = source
-    result = result[[c for c in RAW_SCHEMA_COLS if c in result.columns]]
+    result["data_source"] = "REAL"
+    result = result[[c for c in RAW_SCHEMA_COLS + ["data_source"] if c in result.columns]]
 
     logger.info(f"Standardized to {len(result)} rows, columns: {list(result.columns)}")
     return result
@@ -359,7 +366,15 @@ def load_raw_data(
                 df["data_source"] = "SYNTHETIC"
             else:
                 df["data_source"] = "REAL"
-        return df
+
+        # If cached data is synthetic but synthetic data is not permitted, do not return it
+        if not allow_synthetic and (df["data_source"] == "SYNTHETIC").any():
+            logger.warning(
+                "Cached raw data contains SYNTHETIC posts, but allow_synthetic=False. "
+                "Attempting to download real dataset instead..."
+            )
+        else:
+            return df
 
     # Try downloading real data
     try:
@@ -403,21 +418,24 @@ def assert_real_data(df: pd.DataFrame) -> None:
             )
 
 
-def load_fiqa_dataset() -> dict:
+def load_fiqa_dataset(subtask: Optional[str] = None) -> dict:
     """
     Load the FiQA sentiment dataset for cross-dataset evaluation.
 
-    Paper Protocol Alignment (FiQA-2018):
-    - Uses the continuous sentiment score (not discrete labels)
-    - Removes examples with score == 0 (ambiguous / uninformative)
-    - Removes multi-stock examples (texts mentioning >1 ticker)
+    Paper Protocol Alignment (Deng et al. 2023 Table 1 & Table 2 / FiQA-2018):
+    - Two subtasks: 'news' (format == 'headline') and 'post' (format == 'post')
+    - Uses continuous sentiment score (column 'sentiment_score' or 'score')
+    - Removes examples with score == 0 (ambiguous / neutral examples)
+    - Removes multi-stock examples (texts mentioning multiple stocks/entities)
     - Evaluates positive (score > 0) vs negative (score < 0) only
+    - Evaluates on 80/10/10 train/val/test splits
 
-    INTENTIONAL DEVIATIONS from the original FiQA task:
-    - We map to our BULLISH/BEARISH labels for compatibility with our pipeline.
-    - The original FiQA task uses aspect-level sentiment; we use document-level.
+    Args:
+        subtask: Optional subtask filter: 'news' (headlines) or 'post' (microblogs).
+                 If None, returns full dataset splits.
 
-    Returns dict with 'train', 'validation', 'test' DataFrames.
+    Returns:
+        dict with 'train', 'validation', 'test' DataFrames.
     """
     try:
         from datasets import load_dataset
@@ -425,42 +443,52 @@ def load_fiqa_dataset() -> dict:
         splits = {}
         for split_name in ds:
             df = ds[split_name].to_pandas()
-            # Standardize columns
+            # Standardize text column
             if "sentence" in df.columns:
                 df = df.rename(columns={"sentence": "text"})
 
+            # Optional subtask filtering
+            if subtask is not None and "format" in df.columns:
+                sub_norm = subtask.strip().lower()
+                if sub_norm in ("news", "headline", "headlines"):
+                    df = df[df["format"] == "headline"].copy()
+                elif sub_norm in ("post", "posts", "microblog"):
+                    df = df[df["format"] == "post"].copy()
+
+            score_col = None
             if "score" in df.columns:
+                score_col = "score"
+            elif "sentiment_score" in df.columns:
+                score_col = "sentiment_score"
+
+            if score_col is not None:
                 initial_count = len(df)
 
                 # Paper protocol: remove score == 0 (ambiguous examples)
-                df = df[df["score"] != 0].copy()
+                df = df[df[score_col] != 0].copy()
                 logger.info(
-                    f"FiQA {split_name}: removed {initial_count - len(df)} "
-                    f"examples with score == 0 (ambiguous)"
+                    f"FiQA {split_name} (subtask={subtask}): removed {initial_count - len(df)} "
+                    f"examples with score == 0"
                 )
 
                 # Paper protocol: remove multi-stock examples
-                # (texts containing multiple ticker symbols)
                 if "target" in df.columns:
-                    # FiQA has a 'target' column with ticker/entity info
-                    multi_stock_mask = df["target"].astype(str).str.contains(r"[,;]")
+                    multi_stock_mask = df["target"].astype(str).str.contains(r"[,;/]")
                     multi_count = multi_stock_mask.sum()
                     df = df[~multi_stock_mask].copy()
                     logger.info(
-                        f"FiQA {split_name}: removed {multi_count} multi-stock examples"
+                        f"FiQA {split_name} (subtask={subtask}): removed {multi_count} multi-stock examples"
                     )
 
-                # Paper protocol: evaluate positive vs negative only
-                # Map continuous score to binary labels
-                df["sentiment_label"] = df["score"].apply(
+                # Paper protocol: map continuous score to binary labels
+                df["sentiment_label"] = df[score_col].apply(
                     lambda x: "BULLISH" if x > 0 else "BEARISH"
                 )
-                # Preserve continuous score for regression evaluation
-                df["continuous_score"] = df["score"]
+                df["continuous_score"] = df[score_col]
 
             df["data_source"] = "REAL"
             splits[split_name] = df.reset_index(drop=True)
-            logger.info(f"FiQA {split_name}: {len(df)} samples after filtering")
+            logger.info(f"FiQA {split_name} (subtask={subtask}): {len(df)} samples after filtering")
         return splits
     except Exception as e:
         logger.warning(f"Could not load FiQA dataset: {e}")

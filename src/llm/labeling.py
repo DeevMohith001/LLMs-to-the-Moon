@@ -13,7 +13,7 @@ Implements Deng et al. (2023) Section 3.1:
 import time
 from typing import List, Dict, Any, Optional
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.llm.client import BaseLLMProvider, get_llm_provider
 from src.llm.prompts import PromptManager, get_default_prompt_manager
@@ -69,7 +69,7 @@ def generate_reasoning_paths_for_post(
                 "label": parsed["sentiment"],
                 "display_label": parsed["display_label"],
                 "confidence": parsed.get("confidence", 0.85),
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         except Exception as e:
             logger.warning(
@@ -82,7 +82,7 @@ def generate_reasoning_paths_for_post(
                 "label": "neutral",
                 "display_label": "NEUTRAL",
                 "confidence": 0.33,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         path_records.append(record)
 

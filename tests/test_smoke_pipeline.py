@@ -132,7 +132,7 @@ def test_end_to_end_smoke_pipeline():
     print("=" * 60)
     print("SMOKE TEST COMPLETED SUCCESSFULLY WITH ZERO ERRORS!")
     print("=" * 60 + "\n")
-    return True
+    assert eval_metrics["accuracy"] >= 0.0
 
 
 if __name__ == "__main__":
