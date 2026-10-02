@@ -2,12 +2,33 @@
 
 **Academic Venue Reference:** WWW '23 Companion (arXiv:2212.11311)  
 **Authors / Research Team:** ML Research & Engineering Team  
-**Date:** September 2026
+**Date:** October 2026
+
+---
+
+> [!CAUTION]
+> **SYNTHETIC DEVELOPMENT ARTIFACT WARNING**
+>
+> This report previously contained numerical results generated from **synthetic
+> development data** (produced by `generate_development_dataset()`). Those
+> numbers have been removed because they do not constitute valid research
+> findings.
+>
+> To produce a valid research report, run the full pipeline on **real data**:
+> 1. Place a real Reddit dataset at `data/raw/reddit_posts.parquet`
+> 2. Run the preprocessing pipeline: `python -m src.data.preprocessing`
+> 3. Run the benchmark: `python -c "from src.experiments.benchmark import run_comprehensive_benchmark; ..."`
+> 4. Run the financial analysis: `python -m src.finance.run_financial_analysis`
+>
+> The final report must clearly distinguish:
+> - **(A) Paper-reported results** — numbers from Deng et al. (2023)
+> - **(B) Our experimentally measured results** — from running this pipeline on real data
+> - **(C) Development/smoke-test results** — from synthetic data, for verification only
 
 ---
 
 ## 1. Abstract
-This paper investigates financial sentiment analysis of retail investor discussions on social media (Reddit). Due to domain-specific slang, memes, complex derivative strategies, and conflicting arguments, annotating retail financial text is noisy and expensive, with human inter-annotator agreement historically plateauing near 70%. We faithfully reproduce and modernize the semi-supervised knowledge distillation methodology proposed by Deng et al. (WWW '23 Companion), in which a teacher Large Language Model (LLM) generates multiple stochastic reasoning paths with Chain-of-Thought (CoT) summaries. These paths are aggregated via majority voting and continuous soft agreement scores, filtered for consistency ($\ge 5/8$), and distilled into a compact transformer student model via Mean Squared Error (MSE) regression loss. Furthermore, we extend the paper's NLP-only scope by conducting an empirical financial econometrics study across 14 major retail equities ($N=984$ joint observations), examining whether daily Reddit sentiment correlates with forward equity returns (1d, 3d, 5d), lead/lag relationships, and extreme volume event windows.
+This project implements a **modernized reproduction** (NOT a bit-for-bit reproduction) of the semi-supervised knowledge distillation methodology proposed by Deng et al. (WWW '23 Companion). A teacher Large Language Model (LLM) generates multiple stochastic reasoning paths with Chain-of-Thought (CoT) summaries, which are aggregated via majority voting and continuous soft agreement scores, filtered for consistency (≥ 5/8), and distilled into a compact transformer student model via Mean Squared Error (MSE) regression loss. The project further extends the paper's NLP-only scope by conducting an empirical financial econometrics study.
 
 ---
 
@@ -57,34 +78,36 @@ We utilized a curated and verified Reddit financial dataset comprising posts fro
 ---
 
 ## 8. Proposed Implementation
-Our implementation modernizes components of the original paper that relied on proprietary Google infrastructure while preserving the algorithmic core:
-- **Teacher Modernization:** Configurable LLM client abstraction supporting OpenAI (`gpt-4o-mini`), Google Gemini (`gemini-1.5-flash`), Anthropic Claude (`claude-3-5-sonnet`), Local Ollama (`llama3`), and a deterministic offline `MockProvider`.
-- **Student Modernization:** DistilBERT-base-uncased (66M) and DeBERTa-v3-small (44M) sub-word transformer encoders.
-- **Strict Output Validation:** Pydantic/regex parsing enforcing normalized classes `positive`, `neutral`, `negative`.
+Our implementation modernizes components of the original paper that relied on proprietary Google infrastructure while preserving the algorithmic core. This is a **modernized reproduction** — NOT a bit-for-bit reproduction.
+
+**PAPER REPRODUCTION components:**
+- 6-shot in-context demonstrations with CoT/TL;DR reasoning
+- K=8 stochastic reasoning paths at T=0.5
+- Majority voting for direct evaluation
+- Soft agreement score = (pos_count − neg_count) / K ∈ [−1.0, 1.0]
+- Consistency filtering (≥ 5/8 agreement)
+- Student model trained with MSE regression loss on continuous soft scores
+
+**PROJECT EXTENSION components:**
+- Modern LLM providers (OpenAI, Gemini, Anthropic, Ollama, Mock) replacing PaLM-540B
+- DistilBERT/DeBERTa student replacing proprietary Charformer
+- VADER lexicon baseline
+- TF-IDF baselines (LogReg, SVM, Naive Bayes)
+- FinBERT baselines (ProsusAI, HKUST)
+- Financial market analysis (sentiment-return correlations, event studies)
+- Interactive Streamlit dashboard
 
 ---
 
-## 9. LLM Weak Labeling
+## 9–11. LLM Weak Labeling, Multi-Path Reasoning, and Soft-Label Distillation
+*(Sections 9–11 describe the pipeline methodology faithfully — see docs/PAPER_METHODOLOGY.md for full details.)*
+
 In accordance with Deng et al., the prompt template (`configs/prompts/sentiment_prompt.yaml`) specifies:
 1. Domain task framing around expected directional stock price movement.
 2. 6 balanced demonstrations with human-authored financial reasoning rationales.
 3. Instruction to produce a concise 1–2 sentence economic rationale before outputting the final sentiment label.
 
----
-
-## 10. Multi-Path Reasoning & Majority Voting
-For each Reddit submission, $K=8$ independent stochastic generations are produced at temperature $T=0.5$. Direct LLM evaluation is established via majority voting:
-$$\hat{y}_{\text{majority}} = \arg\max_{c \in \{\text{pos}, \text{neu}, \text{neg}\}} \text{count}(c)$$
-Ties are explicitly resolved through a deterministic hierarchy favoring `neutral` (uncertainty) to avoid biased forced choices.
-
----
-
-## 11. Soft-Label Distillation
-Rather than discarding teacher uncertainty, we compute a continuous agreement score:
-$$s_i = \frac{\text{positive\_count}_i - \text{negative\_count}_i}{K} \in [-1.0, 1.0]$$
-The student model minimizes the Mean Squared Error (MSE) loss:
-$$\mathcal{L}_{\text{MSE}} = \frac{1}{N} \sum_{i=1}^N (f_\theta(x_i) - s_i)^2$$
-On the validation set, an exhaustive grid search tunes threshold $\theta \in [0.10, 0.40]$ to optimize validation Macro F1 for mapping scalar outputs back to discrete sentiment classes.
+For each Reddit submission, $K=8$ independent stochastic generations are produced at temperature $T=0.5$. Direct LLM evaluation is established via majority voting. The soft-label distillation computes a continuous agreement score and the student minimizes MSE loss.
 
 ---
 
@@ -98,7 +121,7 @@ We benchmark across four distinct paradigm tiers:
 ---
 
 ## 13. Experimental Setup
-- **Evaluation Set:** Fixed holdout test partition ($N=163$ posts across 14 equities).
+- **Evaluation Set:** Fixed holdout test partition.
 - **Optimization:** AdamW optimizer, learning rate $3 \times 10^{-5}$ (student), linear warmup, weight decay 0.01.
 - **Inference Hardware:** CPU execution (Intel / AMD x86_64).
 - **Random Seed:** Pinned to $42$ across Python, NumPy, PyTorch, and Scikit-Learn.
@@ -107,57 +130,41 @@ We benchmark across four distinct paradigm tiers:
 
 ## 14. Empirical Results
 
-### Sentiment Classification Benchmark (Holdout Test Split)
-*(Empirically measured from our standardized benchmark suite)*
-
-| Model | Paradigm | Accuracy | Macro F1 | Weighted F1 | Precision | Recall | Latency (ms) | Category |
-|:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---|
-| **FinBERT-HKUST** | Pretrained FinBERT | **72.39%** | **0.7229** | **0.7239** | 0.7310 | 0.7230 | ~42.0 | `[PROJECT EXTENSION]` |
-| **FinBERT-ProsusAI** | Pretrained FinBERT | 71.17% | 0.7128 | 0.7125 | 0.7180 | 0.7128 | ~41.5 | `[PROJECT EXTENSION]` |
-| **TF-IDF + Linear SVM** | Classical ML | 100.00%* | 1.0000* | 1.0000* | 1.0000 | 1.0000 | **~0.4** | `[PROJECT EXTENSION]` |
-| **TF-IDF + LogReg** | Classical ML | 100.00%* | 1.0000* | 1.0000* | 1.0000 | 1.0000 | **~0.3** | `[PROJECT EXTENSION]` |
-| **VADER** | Lexicon | 63.19% | 0.6018 | 0.6041 | 0.6420 | 0.6257 | ~1.2 | `[PROJECT EXTENSION]` |
-| **Teacher LLM (8-Path Vote)** | LLM In-Context | 75.00% | 0.7778 | 0.7500 | 0.8125 | 0.7500 | ~1850.0 | `[PAPER REPRODUCTION]` |
-| **Distilled Student (MSE)** | Distillation | 75.00% | 0.7778 | 0.7500 | 0.8000 | 0.7500 | ~14.2 | `[PAPER REPRODUCTION]` |
-
-*\*Note: Classical TF-IDF models achieve near-perfect memorization on small vocabulary subsets but degrade significantly out-of-domain compared to contextual transformers.*
+> **⚠️ RESULTS PENDING: Real data required.**
+>
+> This section will be populated with experimentally measured results after running the benchmark pipeline on real Reddit data. No numerical results are reported until validated.
+>
+> Results must be organized into three categories:
+> - **(A) Paper-reported results:** Numbers from Deng et al. (2023) original paper
+> - **(B) Our experimentally measured results:** From running our pipeline on real data
+> - **(C) Development/smoke-test results:** From synthetic data, clearly labeled as such
 
 ---
 
 ## 15. Ablation Studies
 
-### 15.1 Effect of Number of Reasoning Paths ($K$)
-Empirical testing across $K \in \{1, 3, 5, 8, 16\}$ reveals that Macro F1 increases monotonically up to $K=8$, where variance stabilizes. Increasing from $K=8$ to $K=16$ yields negligible gain (+0.4% F1) at double the token inference cost.
-
-### 15.2 Consistency Filtering Thresholds
-Evaluating retention across agreement thresholds out of 8 paths:
-- $M \ge 5/8$: 85.0% retention, balanced representation preserved (Selected Paper Default).
-- $M \ge 6/8$: 68.0% retention.
-- $M \ge 7/8$: 48.0% retention.
-- $M = 8/8$ (Unanimous): 32.0% retention (prunes complex due diligence posts).
-
-### 15.3 Classification vs. Regression Loss Distillation
-Regression distillation (MSE on continuous consensus) delivers smoother precision-recall operating curves and superior calibration compared to hard one-hot Cross-Entropy loss.
+> **⚠️ RESULTS PENDING: Real data required.**
+>
+> Ablation studies across $K \in \{1, 3, 5, 8, 16\}$ reasoning paths, filtering thresholds, and loss functions will be reported after running the pipeline on real data.
 
 ---
 
-## 16. Categorized Error Analysis
-We analyzed misclassifications across 8 key linguistic and financial failure categories:
-1. **Sarcasm & Memes (31% of errors):** Ironic expressions (e.g., *"literally cannot go tits up"*, clown emojis 🤡) mislead lexicon models.
-2. **Contradictory Long-Form Arguments (24% of errors):** Due diligence posts analyzing strong fundamental revenue beats against deteriorating macro guidance.
-3. **Advanced Derivatives Jargon (18% of errors):** Options mechanics (*IV crush, gamma squeeze, selling cash-secured puts*).
-4. **Ticker Ambiguity (12% of errors):** Common English words matching ticker symbols (*FOR, BE, ALL, GO*).
-5. **Subtle/Implicit Sentiment (15% of errors):** Objective inquiries without explicit directional sentiment.
+## 16. Error Analysis
+
+> **⚠️ RESULTS PENDING: Real data required.**
 
 ---
 
 ## 17. Empirical Financial Analysis (Project Extension)
-We tested whether Reddit sentiment possesses predictive power for forward returns ($N=984$ joint observations across 14 equities during 2023–2024):
-- **1-Day Forward Return Correlation:** Pearson $r = -0.0173$ ($p = 0.5877$, not statistically significant).
-- **3-Day Forward Return Correlation:** Pearson $r = -0.0389$ ($p = 0.2234$).
-- **5-Day Forward Return Correlation:** Pearson $r = -0.0583$ ($p = 0.0677$, weak negative relationship).
-- **OLS Regression:** Slope $\beta_1 = -0.00067$ ($R^2 = 0.0003$).
-- **Event Analysis:** Days with extreme bullish sentiment spikes exhibited modest forward mean reversion (-0.17% next-day spread), consistent with overreaction hypotheses in behavioral finance.
+
+> **⚠️ RESULTS PENDING: Real Reddit data + real market data required.**
+>
+> Financial analysis requires:
+> - Real Reddit posts with valid timestamps for trading day alignment
+> - Real market data from yfinance for forward return computation
+> - Strict timestamp alignment to prevent look-ahead leakage
+>
+> Results are strictly correlational — NOT causal. Do not interpret as trading signals.
 
 ---
 
@@ -196,7 +203,7 @@ We built an 8-page Streamlit application (`dashboard/app.py`):
 ---
 
 ## 22. Conclusion
-We successfully reproduced and modernized the methodology of Deng et al. (WWW '23 Companion). Multi-path reasoning ($K=8$) with Chain-of-Thought summaries provides robust weak supervision, and regression distillation into a compact student model compresses inference latency by $>99\%$ while preserving $>95\%$ of teacher accuracy. In empirical market tests, retail sentiment demonstrates near-zero linear predictive association with next-day returns, confirming modern market efficiency and behavioral overreaction patterns.
+This project implements a modernized reproduction of Deng et al. (WWW '23 Companion). The pipeline faithfully preserves: multi-path reasoning ($K=8$) with Chain-of-Thought summaries for robust weak supervision, and regression distillation into a compact student model. Final numerical conclusions await execution on real data.
 
 ---
 

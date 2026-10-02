@@ -208,7 +208,7 @@ def run_comprehensive_benchmark(
                 logger.warning(f"Skipping student regression model: {e}")
         else:
             logger.info("Student regression model not found — skipping. "
-                       f"Train it first with: python -m src.models.distillation")
+                       f"Train it first with: python -c \"from src.models.distillation import run_distillation_experiments; run_distillation_experiments()\"")
 
         # 7b. Student Classification Distillation
         classification_dir = MODELS_DIR / "distilbert_student_classification"

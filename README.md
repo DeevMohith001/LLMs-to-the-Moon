@@ -7,8 +7,8 @@
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker&logoColor=white)](https://www.docker.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-> **Modernization & Replication Notice:**  
-> "The original paper used PaLM-540B. This implementation uses a modern configurable LLM as a practical replacement while preserving the paper's prompting, repeated-generation, aggregation, and distillation methodology."
+> **Modernization & Reproduction Notice:**  
+> This project is a **modernized reproduction** of the paper's methodology — NOT a bit-for-bit reproduction. The original paper used PaLM-540B. This implementation uses a modern configurable LLM as a practical replacement while faithfully preserving the paper's prompting, repeated-generation, aggregation, and distillation methodology.
 
 ---
 
@@ -182,6 +182,9 @@ metrics = run_distillation_experiments(max_train_samples=100, max_val_samples=30
 print(metrics)
 "
 
+# NOTE: src.models.distillation re-exports from the pipeline modules.
+# The canonical distillation training logic lives in src/distillation/train.py
+
 # Or step-by-step for inspection:
 python -c "
 from src.llm.client import get_llm_provider
@@ -276,28 +279,29 @@ print(p_df)
 
 ## 16. Benchmark Results Summary
 
-Evaluated on the unseen holdout test split ($N = 163$ posts across 14 equities):
+> **⚠️ IMPORTANT:** The benchmark table below will be populated with real results only after running the full pipeline on a real Reddit dataset. The numbers shown previously were generated from **synthetic development data** and have been removed. To produce real results, run the benchmark with real data (see Section 12).
 
-| Model | Paradigm | Accuracy | Macro F1 | Weighted F1 | Precision | Recall | Latency | Category |
-|:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---|
-| **FinBERT-HKUST** | Pretrained FinBERT | **72.39%** | **0.7229** | **0.7239** | 0.7310 | 0.7230 | ~42 ms | `[PROJECT EXTENSION]` |
-| **FinBERT-ProsusAI** | Pretrained FinBERT | 71.17% | 0.7128 | 0.7125 | 0.7180 | 0.7128 | ~41 ms | `[PROJECT EXTENSION]` |
-| **TF-IDF + Linear SVM** | Classical ML | 100.00%* | 1.0000* | 1.0000* | 1.0000 | 1.0000 | ~0.4 ms | `[PROJECT EXTENSION]` |
-| **TF-IDF + LogReg** | Classical ML | 100.00%* | 1.0000* | 1.0000* | 1.0000 | 1.0000 | ~0.3 ms | `[PROJECT EXTENSION]` |
-| **VADER** | Lexicon | 63.19% | 0.6018 | 0.6041 | 0.6420 | 0.6257 | ~1.2 ms | `[PROJECT EXTENSION]` |
-| **Teacher LLM (8-Path)** | LLM In-Context | 75.00% | 0.7778 | 0.7500 | 0.8125 | 0.7500 | ~1850 ms | `[PAPER REPRODUCTION]` |
-| **Distilled Student (MSE)** | Distillation | 75.00% | 0.7778 | 0.7500 | 0.8000 | 0.7500 | ~14 ms | `[PAPER REPRODUCTION]` |
+**Models benchmarked by the pipeline:**
 
-*\*Note: Classical TF-IDF models achieve near-perfect memorization on small vocabularies but lack semantic generalization compared to transformers.*
+| Model | Paradigm | Category | Status |
+|:---|:---|:---|:---|
+| VADER (Lexicon) | Lexicon | `[PROJECT EXTENSION]` | ✅ Implemented |
+| TF-IDF + Logistic Regression | Classical ML | `[PROJECT EXTENSION]` | ✅ Implemented |
+| TF-IDF + Linear SVM | Classical ML | `[PROJECT EXTENSION]` | ✅ Implemented |
+| TF-IDF + Naive Bayes | Classical ML | `[PROJECT EXTENSION]` | ✅ Implemented |
+| FinBERT (ProsusAI) | Pretrained FinBERT | `[PROJECT EXTENSION]` | ✅ Implemented |
+| FinBERT (HKUST) | Pretrained FinBERT | `[PROJECT EXTENSION]` | ✅ Implemented |
+| Teacher LLM (6-Shot + CoT + 8-Path Vote) | LLM In-Context | `[PAPER REPRODUCTION]` | ✅ Implemented (requires API key) |
+| Distilled Student (Classification CE) | Distillation | `[PAPER REPRODUCTION]` | ✅ Implemented (requires trained model) |
+| Distilled Student (Regression MSE) | Distillation | `[PAPER REPRODUCTION]` | ✅ Implemented (requires trained model) |
+
+Run `run_comprehensive_benchmark()` on real data to populate the actual results.
 
 ---
 
 ## 17. Empirical Financial Return Findings
-Analyzed across $N=984$ joint observations over 14 major equities:
-- **1-Day Forward Return Correlation:** Pearson $r = -0.0173$ ($p = 0.5877$, statistically non-significant).
-- **3-Day Forward Return Correlation:** Pearson $r = -0.0389$ ($p = 0.2234$).
-- **5-Day Forward Return Correlation:** Pearson $r = -0.0583$ ($p = 0.0677$, weak negative trend).
-- **Post-Spike Reversals:** Extreme bullish attention spikes yielded a modest $-0.17\%$ forward return reversal, supporting retail overreaction hypotheses.
+
+> **⚠️ IMPORTANT:** Financial analysis results will be produced only when run on real Reddit data paired with real market data (via yfinance). The numbers shown previously were generated from **synthetic development data** and have been removed. Results are strictly correlational — do NOT interpret as causal or as trading signals.
 
 ---
 

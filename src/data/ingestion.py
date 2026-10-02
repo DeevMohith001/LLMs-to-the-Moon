@@ -406,6 +406,17 @@ def assert_real_data(df: pd.DataFrame) -> None:
 def load_fiqa_dataset() -> dict:
     """
     Load the FiQA sentiment dataset for cross-dataset evaluation.
+
+    Paper Protocol Alignment (FiQA-2018):
+    - Uses the continuous sentiment score (not discrete labels)
+    - Removes examples with score == 0 (ambiguous / uninformative)
+    - Removes multi-stock examples (texts mentioning >1 ticker)
+    - Evaluates positive (score > 0) vs negative (score < 0) only
+
+    INTENTIONAL DEVIATIONS from the original FiQA task:
+    - We map to our BULLISH/BEARISH labels for compatibility with our pipeline.
+    - The original FiQA task uses aspect-level sentiment; we use document-level.
+
     Returns dict with 'train', 'validation', 'test' DataFrames.
     """
     try:
@@ -417,14 +428,39 @@ def load_fiqa_dataset() -> dict:
             # Standardize columns
             if "sentence" in df.columns:
                 df = df.rename(columns={"sentence": "text"})
+
             if "score" in df.columns:
-                # Convert continuous score to binary/ternary
-                df["sentiment_label"] = df["score"].apply(
-                    lambda x: "BULLISH" if x > 0 else ("BEARISH" if x < 0 else "NEUTRAL")
+                initial_count = len(df)
+
+                # Paper protocol: remove score == 0 (ambiguous examples)
+                df = df[df["score"] != 0].copy()
+                logger.info(
+                    f"FiQA {split_name}: removed {initial_count - len(df)} "
+                    f"examples with score == 0 (ambiguous)"
                 )
+
+                # Paper protocol: remove multi-stock examples
+                # (texts containing multiple ticker symbols)
+                if "target" in df.columns:
+                    # FiQA has a 'target' column with ticker/entity info
+                    multi_stock_mask = df["target"].astype(str).str.contains(r"[,;]")
+                    multi_count = multi_stock_mask.sum()
+                    df = df[~multi_stock_mask].copy()
+                    logger.info(
+                        f"FiQA {split_name}: removed {multi_count} multi-stock examples"
+                    )
+
+                # Paper protocol: evaluate positive vs negative only
+                # Map continuous score to binary labels
+                df["sentiment_label"] = df["score"].apply(
+                    lambda x: "BULLISH" if x > 0 else "BEARISH"
+                )
+                # Preserve continuous score for regression evaluation
+                df["continuous_score"] = df["score"]
+
             df["data_source"] = "REAL"
-            splits[split_name] = df
-            logger.info(f"FiQA {split_name}: {len(df)} samples")
+            splits[split_name] = df.reset_index(drop=True)
+            logger.info(f"FiQA {split_name}: {len(df)} samples after filtering")
         return splits
     except Exception as e:
         logger.warning(f"Could not load FiQA dataset: {e}")

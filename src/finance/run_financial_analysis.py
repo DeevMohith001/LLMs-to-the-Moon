@@ -26,6 +26,7 @@ from src.utils.common import (
     log_experiment,
     get_logger,
 )
+from src.data.ingestion import assert_real_data, DataUnavailableError
 from src.finance.prices import fetch_historical_prices, compute_forward_returns
 from src.finance.alignment import align_timestamps_to_trading_days
 from src.finance.aggregation import aggregate_daily_sentiment
@@ -43,7 +44,15 @@ logger = get_logger(__name__)
 
 
 def run_full_financial_pipeline():
-    """Run end-to-end financial analysis pipeline."""
+    """
+    Run end-to-end financial analysis pipeline.
+
+    IMPORTANT:
+    - Requires REAL Reddit data and REAL market data.
+    - Hard-fails on synthetic data.
+    - Uses strict timestamp alignment to prevent look-ahead leakage.
+    - Results are CORRELATIONAL, NOT causal. Do not interpret as trading signals.
+    """
     cfg = load_config()
     fin_cfg = cfg.get("finance", {})
     horizons = fin_cfg.get("return_horizons", [1, 3, 5])
@@ -56,7 +65,11 @@ def run_full_financial_pipeline():
         return
 
     reddit_df = pd.read_parquet(proc_file)
-    logger.info(f"Loaded processed Reddit data: {len(reddit_df)} posts")
+
+    # PROVENANCE CHECK: hard-fail on synthetic data
+    assert_real_data(reddit_df)
+
+    logger.info(f"Loaded processed Reddit data: {len(reddit_df)} posts (verified REAL)")
 
     # Determine unique tickers
     tickers = [t for t in reddit_df["ticker"].dropna().unique() if len(t) <= 5]
